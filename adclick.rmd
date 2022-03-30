@@ -1,0 +1,268 @@
+---
+title: "Ad_click_through_rate"
+author: "Elamaran Jayabarathy"
+date: "3/29/2022"
+output: html_document
+---
+
+
+```{r setup}
+
+knitr::opts_knit$set(root.dir = 'D:/Projects/Ad_click')
+```
+
+
+##library
+
+```{r}
+library(lubridate)
+library(dplyr)
+library(forecast)
+library(caret)
+library(rpart)
+library(rpart.plot)
+
+```
+#load the datset
+
+```{r}
+ad.df<- read.csv("D:/TBANLT 560/Final_Exam/advertising.csv")
+
+```
+## Data pre-processing
+
+
+```{r}
+
+ad.df <- ad.df %>% mutate(Timestamp = mdy_hm(`Timestamp`))
+ad.df<-ad.df %>%
+  dplyr::mutate(month = lubridate::month(Timestamp), 
+                day = lubridate::day(Timestamp),
+                dayofweek= lubridate::wday(Timestamp, week_start = 1))
+
+
+```
+
+
+
+## Check for Imbalance of dependant data-- We have equal number yes/no
+
+```{r}
+
+barplot(prop.table(table(ad.df$Clicked.on.Ad)),
+        col = rainbow(2),
+        main = "Class Distribution")
+
+```
+
+
+
+## Exploratory Data  Analysis
+
+## Summary Statistics
+```{r}
+
+summary(ad.df)
+```
+
+
+##What age group does the dataset majorly consist of?
+
+```{r}
+
+ggplot(data=ad.df,aes(x=Age))+
+  geom_histogram(aes(x =Age),
+                 bins=20,
+                 color="black", 
+                 fill="dodgerblue") +
+  labs(title="Histogram for Age group",
+         x= "Age")+
+  geom_density(col=3)
+
+
+```
+
+
+### Income distribution for different age groups , clicked on Ad
+
+```{r}
+ad.df$Clicked.on.Ad <- as.factor(ad.df$Clicked.on.Ad)
+ggplot(ad.df, aes(x = Age, y =Area.Income, colour = Clicked.on.Ad))+ 
+  geom_point(size=2.5)
+
+
+```
+
+### Which age group is spending maximum time on the internet? and who clicked on Ad?
+
+```{r}
+ggplot(ad.df, aes(x = Age, y =Daily.Internet.Usage, colour = Clicked.on.Ad))+ 
+  geom_point(size=2) +  scale_color_brewer(palette = "Set1")
+##scale_color_grey(start = 0.8, end = 0.2)
+#scale_color_manual(values = c("A" = "green", "B" = "red"))
+
+```
+
+
+### Ad click based on gender
+
+```{r}
+ggplot(ad.df, 
+       aes(x = Male, 
+           fill = Clicked.on.Ad)) + 
+  geom_bar(position = "dodge")
+
+```
+
+
+
+### Visualizing Ad clicked on different time stamps
+
+
+```{r}
+
+cdplot(as.factor(Clicked.on.Ad) ~ month , data=ad.df)
+cdplot(as.factor(Clicked.on.Ad) ~ day , data=ad.df)
+cdplot(as.factor(Clicked.on.Ad) ~ dayofweek , data=ad.df)
+
+```
+
+## Check for correlation
+
+```{r}
+library(corrplot)
+
+M<-cor(ad.df[, unlist(lapply(ad.df, is.numeric))],method="pearson")
+M
+corrplot(M,method="circle")
+
+
+```
+## Machine Learning Models
+
+## Removing the variables ad topic, city,country,Timestamp  which is of not gretaer importance to model
+
+```{r}
+
+ad.df<-select (ad.df,-c(Ad.Topic.Line,City,Country,Timestamp))
+
+```
+
+
+## Split the dataset into train and test
+
+```{r}
+
+set.seed(1) # Set the seed for the  random number generator for reproducing the
+# partition.
+train.index <- sample(c(1:dim(ad.df)[1]), dim(ad.df)[1]*0.7)
+test.index <- setdiff(c(1:dim(ad.df)[1]), train.index)
+train.df <- ad.df[train.index, ]
+test.df <- ad.df[test.index, ]
+
+
+```
+
+
+
+### Using Logistic regression buid the model
+
+```{r}
+
+lm.fit <- glm(Clicked.on.Ad ~., data = train.df, family = "binomial")
+summary(lm.fit)
+
+```
+
+### Predicting the model using test dataset
+
+```{r}
+# evaluate
+predictlm <- predict(lm.fit, test.df)
+
+predictlm<-ifelse(predictlm > 0.5, 1, 0)
+
+```
+
+
+### Evaluate the model Accuracy
+
+```{r}
+library(caret)
+cmt1<-confusionMatrix(as.factor(predictlm),as.factor(test.df$Clicked.on.Ad))
+cmt1
+```
+
+
+
+
+
+### Naive bayes
+
+```{r}
+library(e1071)
+ad.nb <- naiveBayes(Clicked.on.Ad ~ ., data = train.df)
+ad.nb
+
+```
+
+## Predicting the model using test dataset
+ 
+```{r}
+
+predict_nb<- predict(ad.nb, newdata = test.df)
+cm2<-confusionMatrix(as.factor(predict_nb), as.factor(test.df$Clicked.on.Ad))
+cm2
+```
+
+## Decision tree
+
+```{r}
+
+ad_dt <-rpart(Clicked.on.Ad ~ ., data = train.df)
+prp(ad_dt, type = 1, extra = 1, split.font = 1, varlen =-10)
+```
+
+
+### Predicting the model using test dataset
+
+
+```{r}
+
+predict_dt<-predict(ad_dt,test.df,type="prob")
+predict_dt <- ifelse(predict_dt>0.5,1,0)
+predict_dt <- factor(colnames(predict_dt)[max.col(predict_dt)])
+cm3 <-confusionMatrix(as.factor(predict_dt),as.factor(test.df$Clicked.on.Ad))
+cm3
+
+
+```
+
+## Model comparison based on accuracy
+
+```{r}
+
+
+accuracy <- data.frame(round(cmt1$overall*100,3),round(cm2$overall*100,3),
+                 round(cm3$overall*100,3))
+
+
+names(accuracy) <- c("Logistic","NaiveBayes","DecisionTree")
+
+model_compare <- data.frame(Model = c('Logistic',
+                                      'NaiveBayes',
+                                      'DecisionTree'
+                                      ),
+                            Accuracy = c(accuracy$Logistic[1],
+                                         accuracy$NaiveBayes[1],
+                                         accuracy$DecisionTree[1]
+                                         ))
+
+ggplot(aes(x=Model, y=Accuracy,fill=Model), data=model_compare) +
+    geom_bar(stat='identity')  +
+       geom_text(aes(label = Accuracy), size = 3,position=position_dodge(0.9))+
+    ggtitle('Comparative Accuracy of Models on Cross-Validation Data') +
+    xlab('Models') +
+    ylab('Overall Accuracy')
+
+```
